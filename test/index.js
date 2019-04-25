@@ -658,7 +658,7 @@ describe('Liftoff', function() {
   });
 
   describe('config', function() {
-    it('should be empty if not specified', function(done) {
+    it('is empty if `configFiles` is not specified', function(done) {
       var app = new Liftoff({
         name: 'myapp',
       });
@@ -668,7 +668,7 @@ describe('Liftoff', function() {
       });
     });
 
-    it('TODO: name', function(done) {
+    it('loads config if a `configFiles` is found and makes it available with the same key on `config`', function(done) {
       var app = new Liftoff({
         name: 'myapp',
         configFiles: {
@@ -685,7 +685,7 @@ describe('Liftoff', function() {
       });
     });
 
-    it('TODO: name with extends', function(done) {
+    it('loads and merges a config file specified if loaded file provides `extends` property', function(done) {
       var app = new Liftoff({
         name: 'myapp',
         configFiles: {
@@ -699,156 +699,6 @@ describe('Liftoff', function() {
             bbb: 'BBB',
           },
         });
-        done();
-      });
-    });
-
-    it.skip('should use default cwd if not specified', function(done) {
-      var app = new Liftoff({
-        name: 'myapp',
-        configFiles: {
-          testconfig: [
-            { path: '.', extensions: ['.js', '.json'] },
-          ],
-        },
-      });
-      app.prepare({
-        cwd: 'test/fixtures/configfiles',
-      }, function(env) {
-        expect(env.configFiles).to.deep.equal({
-          testconfig: path.resolve('./test/fixtures/configfiles/testconfig.json'),
-        });
-        done();
-      });
-    });
-
-    it.skip('should use default extensions if not specified', function(done) {
-      var app = new Liftoff({
-        extensions: { '.md': null, '.txt': null },
-        name: 'myapp',
-        configFiles: {
-          README: {
-            markdown: {
-              path: '.',
-            },
-            text: {
-              path: 'test/fixtures/configfiles',
-            },
-            markdown2: {
-              path: '.',
-              extensions: ['.json', '.js'],
-            },
-            text2: {
-              path: 'test/fixtures/configfiles',
-              extensions: ['.json', '.js'],
-            },
-          },
-        },
-      });
-      app.prepare({}, function(env) {
-        expect(env.configFiles).to.deep.equal({
-          README: {
-            markdown: path.resolve('./README.md'),
-            text: path.resolve('./test/fixtures/configfiles/README.txt'),
-            markdown2: null,
-            text2: null,
-          },
-        });
-        done();
-      });
-    });
-
-    it.skip('should use specified loaders', function(done) {
-      var logRequire = [];
-      var logFailure = [];
-
-      var app = new Liftoff({
-        extensions: {
-          '.md': './test/fixtures/configfiles/require-md',
-        },
-        name: 'myapp',
-        configFiles: {
-          README: {
-            text_null: {
-              path: 'test/fixtures/configfiles',
-            },
-            text_err: {
-              path: 'test/fixtures/configfiles',
-              extensions: {
-                '.txt': './test/fixtures/configfiles/require-non-exist',
-              },
-            },
-            text: {
-              path: 'test/fixtures/configfiles',
-              extensions: {
-                '.txt': './test/fixtures/configfiles/require-txt',
-              },
-            },
-            markdown: {
-              path: '.',
-            },
-            markdown_badext: {
-              path: '.',
-              extensions: {
-                '.txt': './test/fixtures/configfiles/require-txt',
-              },
-            },
-            markdown_badext2: {
-              path: '.',
-              extensions: {
-                '.txt': './test/fixtures/configfiles/require-non-exist',
-              },
-            },
-          },
-          // Intrinsic extension-loader mappings are prioritized.
-          index: {
-            test: {
-              path: 'test/fixtures/configfiles',
-              extensions: { // ignored
-                '.js': './test/fixtures/configfiles/require-js',
-                '.json': './test/fixtures/configfiles/require-json',
-              },
-            },
-          },
-        },
-      });
-      app.on('requireFail', function(moduleName, error) {
-        logFailure.push({ moduleName: moduleName, error: error });
-      });
-      app.on('require', function(moduleName, module) {
-        logRequire.push({ moduleName: moduleName, module: module });
-      });
-      app.prepare({}, function(env) {
-        expect(env.configFiles).to.deep.equal({
-          README: {
-            text: path.resolve('./test/fixtures/configfiles/README.txt'),
-            text_null: null,
-            text_err: path.resolve('./test/fixtures/configfiles/README.txt'),
-            markdown: path.resolve('./README.md'),
-            markdown_badext: null,
-            markdown_badext2: null,
-          },
-          index: {
-            test: path.resolve('./test/fixtures/configfiles/index.json'),
-          },
-        });
-
-        expect(logRequire.length).to.equal(2);
-        expect(logRequire[0].moduleName)
-          .to.equal('./test/fixtures/configfiles/require-txt');
-        expect(logRequire[1].moduleName)
-          .to.equal('./test/fixtures/configfiles/require-md');
-
-        expect(logFailure.length).to.equal(1);
-        expect(logFailure[0].moduleName)
-          .to.equal('./test/fixtures/configfiles/require-non-exist');
-
-        expect(require(env.configFiles.README.markdown))
-          .to.equal('Load README.md by require-md');
-        expect(require(env.configFiles.README.text)).to
-          .to.equal('Load README.txt by require-txt');
-        expect(require(env.configFiles.index.test))
-          .to.deep.equal({ aaa: 'AAA' });
         done();
       });
     });
