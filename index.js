@@ -10,8 +10,10 @@ var mapValues = require('object.map');
 var fined = require('fined');
 
 var findCwd = require('./lib/find_cwd');
+var arrayFind = require('./lib/array_find');
 var findConfig = require('./lib/find_config');
 var fileSearch = require('./lib/file_search');
+var needsLookup = require('./lib/needs_lookup');
 var parseOptions = require('./lib/parse_options');
 var silentRequire = require('./lib/silent_require');
 var buildConfigName = require('./lib/build_config_name');
@@ -24,14 +26,14 @@ function Liftoff(opts) {
 }
 util.inherits(Liftoff, EE);
 
-Liftoff.prototype.requireLocal = function(module, basedir) {
+Liftoff.prototype.requireLocal = function(moduleName, basedir) {
   try {
-    this.emit('beforeRequire', module);
-    var result = require(resolve.sync(module, { basedir: basedir }));
-    this.emit('require', module, result);
+    this.emit('beforeRequire', moduleName);
+    var result = require(resolve.sync(moduleName, { basedir: basedir }));
+    this.emit('require', moduleName, result);
     return result;
   } catch (e) {
-    this.emit('requireFail', module, e);
+    this.emit('requireFail', moduleName, e);
   }
 };
 
@@ -51,6 +53,80 @@ Liftoff.prototype.buildEnvironment = function(opts) {
 
   // calculate current cwd
   var cwd = findCwd(opts);
+
+  var exts = this.extensions;
+  var eventEmitter = this;
+
+  function findAndRegisterLoader(pathObj, defaultObj) {
+    var found = fined(pathObj, defaultObj);
+    if (!found) {
+      // TODO: Should this actually error on not found?
+      // throw new Error('Unable to find extends file: ' + xtends.path);
+      return;
+    }
+    if (isPlainObject(found.extension)) {
+      registerLoader(eventEmitter, found.extension, found.path, cwd);
+    }
+    return found.path;
+  }
+
+  function getModulePath(cwd, xtends) {
+    // If relative, we need to use fined to look up the file. If not, assume a node_module
+    if (needsLookup(xtends)) {
+      var defaultObj = { cwd: cwd, extensions: exts };
+      // Using `xtends` like this should allow people to use a string or any object that fined accepts
+      return findAndRegisterLoader(xtends, defaultObj);
+    }
+
+    return xtends;
+  }
+
+  var visited = {};
+  function loadConfig(cwd, xtends, prev) {
+    var configFilePath = getModulePath(cwd, xtends);
+    if (!configFilePath) {
+      return prev;
+    }
+
+    if (visited[configFilePath]) {
+      // TODO: emit warning about recursion
+      // throw new Error('We encountered a recursive extend for file: ' + configFilePath + '. Please remove the recursive extends.');
+      return prev;
+    }
+    // TODO: this should emit a warning if the configFile could not be loaded
+    var configFile = silentRequire(configFilePath);
+    visited[configFilePath] = true;
+    if (configFile && configFile.extends) {
+      var nextCwd = path.dirname(configFilePath);
+      return loadConfig(nextCwd, configFile.extends, configFile);
+    }
+    return extend(true /* deep */, prev, configFile || {});
+  }
+
+  var configFiles = {};
+  if (isPlainObject(this.configFiles)) {
+    configFiles = mapValues(this.configFiles, function(searchPaths, fileStem) {
+      var defaultObj = { name: fileStem, cwd: cwd, extensions: exts };
+
+      var foundPath = arrayFind(searchPaths, function(pathObj) {
+        return findAndRegisterLoader(pathObj, defaultObj);
+      });
+
+      return foundPath;
+    });
+  }
+
+  var config = mapValues(configFiles, function(startingLocation) {
+    var defaultConfig = {};
+    if (!startingLocation) {
+      return defaultConfig;
+    }
+
+    var config = loadConfig(cwd, startingLocation, defaultConfig);
+    // TODO: better filter?
+    delete config.extends;
+    return config;
+  });
 
   // if cwd was provided explicitly, only use it for searching config
   if (opts.cwd) {
@@ -111,24 +187,6 @@ Liftoff.prototype.buildEnvironment = function(opts) {
     }
   }
 
-  var exts = this.extensions;
-  var eventEmitter = this;
-
-  var configFiles = {};
-  if (isPlainObject(this.configFiles)) {
-    var notfound = { path: null };
-    configFiles = mapValues(this.configFiles, function(prop, name) {
-      var defaultObj = { name: name, cwd: cwd, extensions: exts };
-      return mapValues(prop, function(pathObj) {
-        var found = fined(pathObj, defaultObj) || notfound;
-        if (isPlainObject(found.extension)) {
-          registerLoader(eventEmitter, found.extension, found.path, cwd);
-        }
-        return found.path;
-      });
-    });
-  }
-
   return {
     cwd: cwd,
     require: preload,
@@ -138,6 +196,7 @@ Liftoff.prototype.buildEnvironment = function(opts) {
     modulePath: modulePath,
     modulePackage: modulePackage || {},
     configFiles: configFiles,
+    config: config,
   };
 };
 
