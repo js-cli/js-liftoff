@@ -21,48 +21,67 @@ var app = new Liftoff({
 
 describe('Liftoff', function() {
 
-  describe('buildEnvironment', function() {
+  describe('prepare', function() {
 
-    it('should locate local module using cwd if no config is found', function() {
+    it('should locate local module using cwd if no config is found', function(done) {
       var test = new Liftoff({ name: 'chai' });
       var cwd = 'explicit/cwd';
       var spy = sinon.spy(resolve, 'sync');
       // NODE_PATH might be defined.
       delete process.env.NODE_PATH;
-      test.buildEnvironment({ cwd: cwd });
-      expect(spy.calledWith('chai', { basedir: path.join(process.cwd(), cwd), paths: [] })).to.be.true;
-      spy.restore();
+      test.prepare({ cwd: cwd }, function() {
+        expect(spy.calledWith('chai', { basedir: path.join(process.cwd(), cwd), paths: [] })).to.be.true;
+        spy.restore();
+        done();
+      });
     });
 
-    it('should locate global module using NODE_PATH if defined', function() {
+    it('should locate global module using NODE_PATH if defined', function(done) {
       var test = new Liftoff({ name: 'dummy' });
       var cwd = 'explicit/cwd';
       var spy = sinon.spy(resolve, 'sync');
       process.env.NODE_PATH = path.join(process.cwd(), cwd);
-      test.buildEnvironment();
-      expect(spy.calledWith('dummy', { basedir: process.cwd(), paths: [path.join(process.cwd(), cwd)] })).to.be.true;
-      spy.restore();
+      test.prepare(null, function() {
+        expect(spy.calledWith('dummy', { basedir: process.cwd(), paths: [path.join(process.cwd(), cwd)] })).to.be.true;
+        spy.restore();
+        done();
+      });
     });
 
-    it('if cwd is explicitly provided, don\'t use search_paths', function() {
-      expect(app.buildEnvironment({ cwd: './' }).configPath).to.equal(null);
+    it('if cwd is explicitly provided, don\'t use search_paths', function(done) {
+      app.prepare({ cwd: './' }, function(env) {
+        expect(env.configPath).to.equal(null);
+        done();
+      });
     });
 
-    it('should find case sensitive configPath', function() {
+    it('should find case sensitive configPath', function(done) {
       var expected = path.resolve(__dirname, 'fixtures', 'case', (process.platform === 'linux' ? 'Mochafile.js' : 'mochafile.js'));
-      expect(app.buildEnvironment({ cwd: path.join(__dirname, 'fixtures', 'case') }).configPath).to.equal(expected);
+      app.prepare({ cwd: path.join(__dirname, 'fixtures', 'case') }, function(env) {
+        expect(env.configPath).to.equal(expected);
+        done();
+      });
     });
 
-    it('should find module in the directory next to config', function() {
-      expect(app.buildEnvironment().modulePath).to.equal(path.resolve('node_modules/mocha/index.js'));
+    it('should find module in the directory next to config', function(done) {
+      app.prepare({}, function(env) {
+        expect(env.modulePath).to.equal(path.resolve('node_modules/mocha/index.js'));
+        done();
+      });
     });
 
-    it('should require the package sibling to the module', function() {
-      expect(app.buildEnvironment().modulePackage).to.equal(require('../node_modules/mocha/package.json'));
+    it('should require the package sibling to the module', function(done) {
+      app.prepare({}, function(env) {
+        expect(env.modulePackage).to.equal(require('../node_modules/mocha/package.json'));
+        done();
+      });
     });
 
-    it('should set cwd to match the directory of the config file as long as cwd wasn\'t explicitly provided', function() {
-      expect(app.buildEnvironment().cwd).to.equal(path.resolve('test/fixtures/search_path'));
+    it('should set cwd to match the directory of the config file as long as cwd wasn\'t explicitly provided', function(done) {
+      app.prepare({}, function(env) {
+        expect(env.cwd).to.equal(path.resolve('test/fixtures/search_path'));
+        done();
+      });
     });
 
     describe('for developing against yourself', function() {
@@ -84,8 +103,7 @@ describe('Liftoff', function() {
         }
       });
 
-      it('should clear modulePackage if package.json is of different project',
-      function(done) {
+      it('should clear modulePackage if package.json is of different project', function(done) {
         var fixturesDir = path.resolve(__dirname, 'fixtures');
         var cwd = path.resolve(fixturesDir, 'developing_yourself/app1');
 
@@ -102,8 +120,7 @@ describe('Liftoff', function() {
         }
       });
 
-      it('should use `index.js` if `main` property in package.json ' +
-      'does not exist', function(done) {
+      it('should use `index.js` if `main` property in package.json does not exist', function(done) {
         var fixturesDir = path.resolve(__dirname, 'fixtures');
         var cwd = path.resolve(fixturesDir, 'developing_yourself/app2');
 
@@ -123,10 +140,6 @@ describe('Liftoff', function() {
 
     });
 
-  });
-
-  describe('prepare', function() {
-
     it('should set the process.title to the moduleName', function() {
       app.prepare({}, function() {});
       expect(process.title).to.equal(app.moduleName);
@@ -143,15 +156,8 @@ describe('Liftoff', function() {
     });
 
     it('should call prepare with liftoff instance as context', function(done) {
-      app.prepare({}, function() {
+      app.prepare(null, function() {
         expect(this).to.equal(app);
-        done();
-      });
-    });
-
-    it('should pass environment to first argument of prepare callback', function(done) {
-      app.prepare({}, function(env) {
-        expect(env).to.deep.equal(app.buildEnvironment());
         done();
       });
     });
@@ -166,10 +172,11 @@ describe('Liftoff', function() {
 
   describe('execute', function() {
     it('should pass environment to first argument of execute callback', function(done) {
-      var testEnv = app.buildEnvironment();
-      app.execute(testEnv, function(env) {
-        expect(env).to.deep.equal(testEnv);
-        done();
+      app.prepare({}, function(testEnv) {
+        app.execute(testEnv, function(env) {
+          expect(env).to.deep.equal(testEnv);
+          done();
+        });
       });
     });
 
@@ -596,9 +603,8 @@ describe('Liftoff', function() {
 
 require('./lib/build_config_name');
 require('./lib/file_search');
-require('./lib/find_config');
-require('./lib/find_cwd');
 require('./lib/parse_options');
 require('./lib/silent_require');
 require('./lib/register_loader');
 require('./lib/get_node_flags');
+require('./lib/change_env_paths');

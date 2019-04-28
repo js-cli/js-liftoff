@@ -1,28 +1,36 @@
+'use strict';
+
 var util = require('util');
-var path = require('path');
 var EE = require('events').EventEmitter;
 
 var extend = require('extend');
 var resolve = require('resolve');
 var flaggedRespawn = require('flagged-respawn');
-var isPlainObject = require('is-plain-object');
-var mapValues = require('object.map');
-var fined = require('fined');
+var assign = require('object-assign');
 
-var findCwd = require('./lib/find_cwd');
-var findConfig = require('./lib/find_config');
-var fileSearch = require('./lib/file_search');
 var parseOptions = require('./lib/parse_options');
-var silentRequire = require('./lib/silent_require');
 var buildConfigName = require('./lib/build_config_name');
-var registerLoader = require('./lib/register_loader');
 var getNodeFlags = require('./lib/get_node_flags');
+
+var changeEnvPaths = require('./lib/change_env_paths');
+var findConfigFiles = require('./lib/find_config_files');
+var findModule = require('./lib/find_module');
+var preloadModules = require('./lib/preload_modules');
 
 function Liftoff(opts) {
   EE.call(this);
   extend(this, parseOptions(opts));
 }
 util.inherits(Liftoff, EE);
+
+Liftoff.prototype.changeEnvPaths = function(env, opts) {
+  var changed = changeEnvPaths(opts, env.configNameSearch, this.searchPaths);
+  return assign(env, changed);
+};
+
+Liftoff.prototype.findConfigFiles = function(env, configFiles) {
+  return findConfigFiles(configFiles, env, this.extensions, this);
+};
 
 Liftoff.prototype.requireLocal = function(module, basedir) {
   try {
@@ -33,112 +41,6 @@ Liftoff.prototype.requireLocal = function(module, basedir) {
   } catch (e) {
     this.emit('requireFail', module, e);
   }
-};
-
-Liftoff.prototype.buildEnvironment = function(opts) {
-  opts = opts || {};
-
-  // get modules we want to preload
-  var preload = opts.require || [];
-
-  // ensure items to preload is an array
-  if (!Array.isArray(preload)) {
-    preload = [preload];
-  }
-
-  // make a copy of search paths that can be mutated for this run
-  var searchPaths = this.searchPaths.slice();
-
-  // calculate current cwd
-  var cwd = findCwd(opts);
-
-  // if cwd was provided explicitly, only use it for searching config
-  if (opts.cwd) {
-    searchPaths = [cwd];
-  } else {
-    // otherwise just search in cwd first
-    searchPaths.unshift(cwd);
-  }
-
-  // calculate the regex to use for finding the config file
-  var configNameSearch = buildConfigName({
-    configName: this.configName,
-    extensions: Object.keys(this.extensions),
-  });
-
-  // calculate configPath
-  var configPath = findConfig({
-    configNameSearch: configNameSearch,
-    searchPaths: searchPaths,
-    configPath: opts.configPath,
-  });
-
-  // if we have a config path, save the directory it resides in.
-  var configBase;
-  if (configPath) {
-    configBase = path.dirname(configPath);
-    // if cwd wasn't provided explicitly, it should match configBase
-    if (!opts.cwd) {
-      cwd = configBase;
-    }
-  }
-
-  // TODO: break this out into lib/
-  // locate local module and package next to config or explicitly provided cwd
-  /* eslint one-var: 0 */
-  var modulePath, modulePackage;
-  try {
-    var delim = path.delimiter;
-    var paths = (process.env.NODE_PATH ? process.env.NODE_PATH.split(delim) : []);
-    modulePath = resolve.sync(this.moduleName, { basedir: configBase || cwd, paths: paths });
-    modulePackage = silentRequire(fileSearch('package.json', [modulePath]));
-  } catch (e) {}
-
-  // if we have a configuration but we failed to find a local module, maybe
-  // we are developing against ourselves?
-  if (!modulePath && configPath) {
-    // check the package.json sibling to our config to see if its `name`
-    // matches the module we're looking for
-    var modulePackagePath = fileSearch('package.json', [configBase]);
-    modulePackage = silentRequire(modulePackagePath);
-    if (modulePackage && modulePackage.name === this.moduleName) {
-      // if it does, our module path is `main` inside package.json
-      modulePath = path.join(path.dirname(modulePackagePath), modulePackage.main || 'index.js');
-      cwd = configBase;
-    } else {
-      // clear if we just required a package for some other project
-      modulePackage = {};
-    }
-  }
-
-  var exts = this.extensions;
-  var eventEmitter = this;
-
-  var configFiles = {};
-  if (isPlainObject(this.configFiles)) {
-    var notfound = { path: null };
-    configFiles = mapValues(this.configFiles, function(prop, name) {
-      var defaultObj = { name: name, cwd: cwd, extensions: exts };
-      return mapValues(prop, function(pathObj) {
-        var found = fined(pathObj, defaultObj) || notfound;
-        if (isPlainObject(found.extension)) {
-          registerLoader(eventEmitter, found.extension, found.path, cwd);
-        }
-        return found.path;
-      });
-    });
-  }
-
-  return {
-    cwd: cwd,
-    require: preload,
-    configNameSearch: configNameSearch,
-    configPath: configPath,
-    configBase: configBase,
-    modulePath: modulePath,
-    modulePackage: modulePackage || {},
-    configFiles: configFiles,
-  };
 };
 
 Liftoff.prototype.handleFlags = function(cb) {
@@ -164,12 +66,26 @@ Liftoff.prototype.prepare = function(opts, fn) {
 
   process.title = this.processTitle;
 
+  opts = opts || {};
+
   var completion = opts.completion;
   if (completion && this.completions) {
     return this.completions(completion);
   }
 
-  var env = this.buildEnvironment(opts);
+  // calculate the regex to use for finding the config file
+  var configNameSearch = buildConfigName({
+    configName: this.configName,
+    extensions: Object.keys(this.extensions),
+  });
+
+  var env = {
+    require: [].concat(opts.require || []),
+    configNameSearch: configNameSearch,
+  };
+  assign(env, this.changeEnvPaths(env, opts));
+  env.configFiles = this.findConfigFiles(env, this.configFiles);
+  assign(env, findModule(this.moduleName, env.configBase, env.cwd));
 
   fn.call(this, env);
 };
@@ -198,22 +114,10 @@ Liftoff.prototype.execute = function(env, forcedFlags, fn) {
       }
       if (ready) {
         preloadModules(this, env);
-        registerLoader(this, this.extensions, env.configPath, env.cwd);
         fn.call(this, env, argv);
       }
     }
   }.bind(this));
 };
-
-function preloadModules(inst, env) {
-  var basedir = env.cwd;
-  env.require.filter(toUnique).forEach(function(module) {
-    inst.requireLocal(module, basedir);
-  });
-}
-
-function toUnique(elem, index, array) {
-  return array.indexOf(elem) === index;
-}
 
 module.exports = Liftoff;
