@@ -8,6 +8,8 @@ var flaggedRespawn = require('flagged-respawn');
 var isPlainObject = require('is-plain-object');
 var mapValues = require('object.map');
 var fined = require('fined');
+var reemit = require('emit-mapper');
+var EventedRequire = require('evented-require');
 
 var findCwd = require('./lib/find_cwd');
 var findConfig = require('./lib/find_config');
@@ -18,22 +20,17 @@ var buildConfigName = require('./lib/build_config_name');
 var registerLoader = require('./lib/register_loader');
 var getNodeFlags = require('./lib/get_node_flags');
 
+var preloadEvents = {
+  before: 'preload:before',
+  success: 'preload:success',
+  failure: 'preload:failure',
+};
+
 function Liftoff(opts) {
   EE.call(this);
   extend(this, parseOptions(opts));
 }
 util.inherits(Liftoff, EE);
-
-Liftoff.prototype.requireLocal = function(module, basedir) {
-  try {
-    this.emit('preload:before', module);
-    var result = require(resolve.sync(module, { basedir: basedir }));
-    this.emit('preload:success', module, result);
-    return result;
-  } catch (e) {
-    this.emit('preload:failure', module, e);
-  }
-};
 
 Liftoff.prototype.buildEnvironment = function(opts) {
   opts = opts || {};
@@ -175,6 +172,8 @@ Liftoff.prototype.prepare = function(opts, fn) {
 };
 
 Liftoff.prototype.execute = function(env, forcedFlags, fn) {
+  var self = this;
+
   if (typeof forcedFlags === 'function') {
     fn = forcedFlags;
     forcedFlags = undefined;
@@ -183,34 +182,31 @@ Liftoff.prototype.execute = function(env, forcedFlags, fn) {
     throw new Error('You must provide a callback function.');
   }
 
+  var preloader = new EventedRequire(env.cwd);
+  reemit(preloader, self, preloadEvents);
+
   this.handleFlags(function(err, flags) {
     if (err) {
       throw err;
     }
     flags = flags || [];
 
-    flaggedRespawn(flags, process.argv, forcedFlags, execute.bind(this));
+    flaggedRespawn(flags, process.argv, forcedFlags, execute);
 
     function execute(ready, child, argv) {
       if (child !== process) {
         var execArgv = getNodeFlags.fromReorderedArgv(argv);
-        this.emit('respawn', execArgv, child);
+        self.emit('respawn', execArgv, child);
       }
       if (ready) {
-        preloadModules(this, env);
-        registerLoader(this, this.extensions, env.configPath, env.cwd);
-        fn.call(this, env, argv);
+        // TODO: Remove if unique filter stays in EventedRequire
+        preloader.requireAll(env.preload.filter(toUnique));
+        registerLoader(self, self.extensions, env.configPath, env.cwd);
+        fn.call(self, env, argv);
       }
     }
-  }.bind(this));
-};
-
-function preloadModules(inst, env) {
-  var basedir = env.cwd;
-  env.preload.filter(toUnique).forEach(function(module) {
-    inst.requireLocal(module, basedir);
   });
-}
+};
 
 function toUnique(elem, index, array) {
   return array.indexOf(elem) === index;

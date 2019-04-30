@@ -269,7 +269,7 @@ describe('Liftoff', function() {
     });
   });
 
-  describe('requireLocal', function() {
+  describe('events: preload:*', function() {
 
     it('should attempt pre-loading local modules if they are requested', function(done) {
       var app = new Liftoff({ name: 'test' });
@@ -357,7 +357,9 @@ describe('Liftoff', function() {
         expect(isEmittedBeforeRequired).to.equal(true);
         done();
       });
-      requireTest.requireLocal('mocha', __dirname);
+      requireTest.prepare({ preload: ['mocha'] }, function(env) {
+        requireTest.execute(env, function() {});
+      });
     });
 
     it('should emit `preload:before` and `preload:failure` with an error if a module can\'t be found.', function(done) {
@@ -372,7 +374,9 @@ describe('Liftoff', function() {
         expect(isEmittedBeforeRequired).to.equal(true);
         done();
       });
-      requireFailTest.requireLocal('badmodule', __dirname);
+      requireFailTest.prepare({ preload: ['badmodule'] }, function(env) {
+        requireFailTest.execute(env, function() {});
+      });
     });
 
   });

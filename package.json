@@ -21,6 +21,8 @@
     "cover": "nyc --reporter=lcov --reporter=text-summary npm test"
   },
   "dependencies": {
+    "emit-mapper": "^1.0.0",
+    "evented-require": "^1.0.0",
     "extend": "^3.0.0",
     "findup-sync": "^3.0.0",
     "fined": "^1.0.1",
