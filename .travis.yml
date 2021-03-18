@@ -1,19 +1,12 @@
 language: node_js
 node_js:
+  - "14"
+  - "12"
   - "10"
-  - "8"
-  - "6"
-  - "5"
-  - "4"
-  - "0.12"
-  - "0.10"
 matrix:
   fast_finish: true
-script: if [ $(echo "${TRAVIS_NODE_VERSION}" | cut -d'.' -f1) -ge 6 ]; then
-          npm run cover;
-        else
-          npm test;
-        fi
+script:
+  - npm run cover
 os:
   - linux
   - osx
